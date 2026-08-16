@@ -489,3 +489,11 @@ ismapped(pagetable_t pagetable, uint64 va)
   }
   return 0;
 }
+
+uint64
+kvmstat(void)
+{
+  int pagecount = kpgcount();
+
+  return (uint64)4096 * pagecount;
+}

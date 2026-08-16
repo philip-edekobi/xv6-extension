@@ -17,6 +17,7 @@ OBJS = \
   $K/trampoline.o \
   $K/trap.o \
   $K/syscall.o \
+  $K/sysvm.o \
   $K/sysproc.o \
   $K/bio.o \
   $K/fs.o \
@@ -146,6 +147,7 @@ UPROGS=\
 	$U/_forphan\
 	$U/_dorphan\
 	$U/_sync\
+	$U/_vmstat\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
