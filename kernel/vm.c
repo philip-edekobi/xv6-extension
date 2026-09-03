@@ -495,5 +495,5 @@ kvmstat(void)
 {
   int pagecount = kpgcount();
 
-  return (uint64)4096 * pagecount;
+  return (uint64)PGSIZE * pagecount;
 }
