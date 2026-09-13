@@ -1,7 +1,7 @@
 #include "fdt.h"
 #include "kernel/types.h"
 
-#define MAX_PROPS    128
+#define MAX_PROPS    256
 #define MAX_CHILDREN 128
 
 struct fdt_property_list props[MAX_PROPS];
@@ -190,7 +190,7 @@ parse_fdt(uint64 dtb)
   if (skip.status != FDT_OK)
     return skip;
 
-  if (fdt32_to_cpu(skip.value) != FDT_END)
+  if (fdt32_to_cpu(*(uint32 *)skip.value) != FDT_END)
     return (struct fdt_result){.status = FDT_ERR_UNEXPECTED_TOKEN, .value = 0};
 
   return (struct fdt_result){.status = FDT_OK, .value = 1};
