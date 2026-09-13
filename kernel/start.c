@@ -12,7 +12,7 @@ __attribute__((aligned(16))) char stack0[4096 * NCPU];
 
 // entry.S jumps here in machine mode on stack0.
 void
-start()
+start(uint64 hartid, uint64 dtb)
 {
   // set M Previous Privilege mode to Supervisor, for mret.
   unsigned long x = r_mstatus();

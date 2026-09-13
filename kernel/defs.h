@@ -10,6 +10,10 @@ struct sleeplock;
 struct stat;
 struct superblock;
 
+
+// fdt.c
+struct fdt_result parse_fdt(uint64 dtb);
+
 // bio.c
 void            binit(void);
 struct buf*     bread(uint, uint);

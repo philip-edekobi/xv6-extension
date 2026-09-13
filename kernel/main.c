@@ -3,18 +3,24 @@
 #include "memlayout.h"
 #include "riscv.h"
 #include "defs.h"
+#include "fdt.h"
 
 volatile static int started = 0;
 
 // start() jumps here in supervisor mode on all CPUs.
 void
-main()
+main(uint64 hartid, uint64 dtb)
 {
   if (cpuid() == 0) {
+    // read dtb to setup memory
+    struct fdt_result parse_res = parse_fdt(dtb);
+
     consoleinit();
     printkinit();
     printk("\n");
     printk("xv6 kernel is booting\n");
+    printk("DTB pointer is %s\n",
+           parse_res.status == FDT_OK ? "valid" : "invalid");
     printk("\n");
     kinit();            // physical page allocator
     kvminit();          // create kernel page table
