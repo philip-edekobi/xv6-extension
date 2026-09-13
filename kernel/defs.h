@@ -13,6 +13,9 @@ struct superblock;
 
 // fdt.c
 struct fdt_result parse_fdt(uint64 dtb);
+struct fdt_node *fdt_get_root_node(void);
+struct fdt_node *fdt_get_memory_node(struct fdt_node *root);
+void fdt_populate_memory_vals(struct fdt_node *mem, uint64 *base, uint64 *size);
 
 // bio.c
 void            binit(void);
@@ -63,7 +66,7 @@ void            ireclaim(int);
 // kalloc.c
 void*           kalloc(void);
 void            kfree(void *);
-void            kinit(void);
+void            kinit(uint64 *base, uint64 *size);
 int             kpgcount(void);
 
 // log.c
@@ -157,7 +160,7 @@ void            uartwrite(char [], int);
 void            uartputc_sync(int);
 
 // vm.c
-void            kvminit(void);
+void            kvminit(uint64 *base, uint64 *size);
 void            kvminithart(void);
 void            kvmmap(pagetable_t, uint64, uint64, uint64, int);
 int             mappages(pagetable_t, uint64, uint64, uint64, int);

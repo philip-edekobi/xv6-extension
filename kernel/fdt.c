@@ -1,29 +1,38 @@
 #include "fdt.h"
-#include "kernel/types.h"
+#include "riscv.h"
+#include "defs.h"
 
-#define MAX_PROPS    256
-#define MAX_CHILDREN 128
+#define MAX_PROPS 256
+#define MAX_NODES 128
 
 struct fdt_property_list props[MAX_PROPS];
-struct fdt_node nodes[MAX_CHILDREN];
+struct fdt_node nodes[MAX_NODES];
 
 static int next_node = 0, next_prop = 0;
 
-// static uint64 mem_base, mem_size, stringbase, fdt_endpoint;
-static uint64 mem_size, stringbase, fdt_endpoint;
+static uint64 mem_base, mem_size, stringbase, fdt_endpoint;
+
+static struct fdt_result
+read_token(uint64 pos)
+{
+  if (pos + sizeof(uint32) > fdt_endpoint)
+    return (struct fdt_result){.status = FDT_ERR_TRUNCATED, .value = 0};
+
+  return (struct fdt_result){.status = FDT_OK,
+                             .value = fdt32_to_cpu(*(uint32 *)pos)};
+}
 
 static struct fdt_result
 skip_nop_tokens(uint64 pos)
 {
   uint64 curr_loc = pos;
-  uint32 tok;
 
   for (;;) {
-    if (curr_loc + sizeof(uint32) > fdt_endpoint)
-      return (struct fdt_result){.status = FDT_ERR_TRUNCATED, .value = 0};
+    struct fdt_result res = read_token(curr_loc);
+    if (res.status != FDT_OK)
+      return res;
 
-    tok = fdt32_to_cpu(*(uint32 *)curr_loc);
-    if (tok != FDT_NOP)
+    if (res.value != FDT_NOP)
       return (struct fdt_result){.status = FDT_OK, .value = curr_loc};
 
     curr_loc += sizeof(uint32);
@@ -55,8 +64,10 @@ read_name(uint64 pos)
 static struct fdt_result
 parse_prop(uint64 pos, struct fdt_property_list *proplist)
 {
-  uint32 tok = fdt32_to_cpu(*(uint32 *)pos);
-  if (tok != FDT_PROP)
+  struct fdt_result tok_read = read_token(pos);
+  if (tok_read.status != FDT_OK)
+    return tok_read;
+  if (tok_read.value != FDT_PROP)
     return (struct fdt_result){.status = FDT_ERR_UNEXPECTED_TOKEN, .value = 0};
 
   uint64 datapos = pos + sizeof(uint32);
@@ -73,15 +84,13 @@ parse_prop(uint64 pos, struct fdt_property_list *proplist)
   return (struct fdt_result){.status = FDT_OK, .value = next_pos};
 }
 
-/*
- * For now, I'm just going to visit all the nodes until I find the memory node.
- * After that I might take a look through the reserved memory so I can work out the reserved parts of memory
- */
 static struct fdt_result
 parse_node(uint64 pos, struct fdt_node *node)
 {
-  uint32 tok = fdt32_to_cpu(*(uint32 *)pos);
-  if (tok != FDT_BEGIN_NODE)
+  struct fdt_result tok_read = read_token(pos);
+  if (tok_read.status != FDT_OK)
+    return tok_read;
+  if (tok_read.value != FDT_BEGIN_NODE)
     return (struct fdt_result){.status = FDT_ERR_UNEXPECTED_TOKEN, .value = 0};
 
   uint64 name_pos = pos + sizeof(uint32);
@@ -100,12 +109,15 @@ parse_node(uint64 pos, struct fdt_node *node)
   struct fdt_node *child_tail = 0;
 
   for (;;) {
-    tok = fdt32_to_cpu(*(uint32 *)curr_loc);
-    if (tok != FDT_PROP)
+    tok_read = read_token(curr_loc);
+    if (tok_read.status != FDT_OK)
+      return tok_read;
+    if (tok_read.value != FDT_PROP)
       break;
 
     if (next_prop >= MAX_PROPS)
-      return (struct fdt_result){.status = FDT_ERR_TRUNCATED, .value = 0};
+      return (struct fdt_result){.status = FDT_ERR_OUT_OF_PROP_SLOTS,
+                                 .value = 0};
 
     struct fdt_property_list *current_prop = &props[next_prop++];
     struct fdt_result parse_res = parse_prop(curr_loc, current_prop);
@@ -126,12 +138,15 @@ parse_node(uint64 pos, struct fdt_node *node)
   }
 
   for (;;) {
-    tok = fdt32_to_cpu(*(uint32 *)curr_loc);
-    if (tok != FDT_BEGIN_NODE)
+    tok_read = read_token(curr_loc);
+    if (tok_read.status != FDT_OK)
+      return tok_read;
+    if (tok_read.value != FDT_BEGIN_NODE)
       break;
 
-    if (next_node >= MAX_CHILDREN)
-      return (struct fdt_result){.status = FDT_ERR_TRUNCATED, .value = 0};
+    if (next_node >= MAX_NODES)
+      return (struct fdt_result){.status = FDT_ERR_OUT_OF_NODE_SLOTS,
+                                 .value = 0};
 
     struct fdt_node *child = &nodes[next_node++];
     *child = (struct fdt_node){.props = 0, .name = 0, .next = 0};
@@ -157,8 +172,10 @@ parse_node(uint64 pos, struct fdt_node *node)
     return skip;
   curr_loc = skip.value;
 
-  tok = fdt32_to_cpu(*(uint32 *)curr_loc);
-  if (tok != FDT_END_NODE)
+  tok_read = read_token(curr_loc);
+  if (tok_read.status != FDT_OK)
+    return tok_read;
+  if (tok_read.value != FDT_END_NODE)
     return (struct fdt_result){.status = FDT_ERR_UNEXPECTED_TOKEN, .value = 0};
 
   curr_loc += sizeof(uint32);
@@ -168,6 +185,8 @@ parse_node(uint64 pos, struct fdt_node *node)
 struct fdt_result
 parse_fdt(uint64 dtb)
 {
+  next_node = next_prop = 0;
+
   struct fdt_header *fdt_h = (struct fdt_header *)dtb;
   if (!MATCH32b(fdt_h->magic, FDT_MAGIC))
     return (struct fdt_result){.status = FDT_ERR_BAD_MAGIC, .value = 0};
@@ -190,10 +209,19 @@ parse_fdt(uint64 dtb)
   if (skip.status != FDT_OK)
     return skip;
 
-  if (fdt32_to_cpu(*(uint32 *)skip.value) != FDT_END)
+  struct fdt_result tok_read = read_token(skip.value);
+  if (tok_read.status != FDT_OK)
+    return tok_read;
+  if (tok_read.value != FDT_END)
     return (struct fdt_result){.status = FDT_ERR_UNEXPECTED_TOKEN, .value = 0};
 
-  return (struct fdt_result){.status = FDT_OK, .value = 1};
+  return (struct fdt_result){.status = FDT_OK, .value = 0};
+}
+
+uint64
+fdt_get_memory_base(void)
+{
+  return mem_base;
 }
 
 uint64
@@ -202,10 +230,48 @@ fdt_get_memory_size(void)
   return mem_size;
 }
 
-struct fdt_node
+struct fdt_node *
 fdt_get_root_node(void)
 {
-  return nodes[0];
+  return &nodes[0];
+}
+
+struct fdt_node *
+fdt_get_memory_node(struct fdt_node *root)
+{
+  struct fdt_node *next;
+
+  if (!root)
+    return 0;
+
+  if (strncmp(root->name, "memory", strlen("memory")) == 0)
+    return root;
+
+  struct fdt_node *sib = root->next;
+  if ((next = fdt_get_memory_node(sib)) == 0)
+    return fdt_get_memory_node(root->children);
+
+  return next;
+}
+
+void
+fdt_populate_memory_vals(struct fdt_node *mem, uint64 *base, uint64 *size)
+{
+  if (mem == 0)
+    return;
+
+  struct fdt_property_list *prop = mem->props;
+  while (prop != 0) {
+    if (strncmp(prop->name, "reg", 4) == 0) {
+      uint64 b = fdt64_to_cpu(*(uint64 *)prop->value);
+      *base = b;
+
+      uint64 sizeloc = (uint64)(prop->value) + sizeof(uint64);
+      *size = fdt64_to_cpu(*(uint64 *)sizeloc);
+    }
+
+    prop = prop->next;
+  }
 }
 
 const char *
@@ -224,6 +290,10 @@ fdt_status_str(fdt_status_t s)
     return "node not found";
   case FDT_ERR_PROP_NOT_FOUND:
     return "property not found";
+  case FDT_ERR_OUT_OF_NODE_SLOTS:
+    return "max node amount exceeded";
+  case FDT_ERR_OUT_OF_PROP_SLOTS:
+    return "max prop amout exceeded";
   default:
     return "unknown error";
   }

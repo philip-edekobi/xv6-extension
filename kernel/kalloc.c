@@ -23,11 +23,14 @@ struct {
   struct run *freelist;
 } kmem;
 
+static uint64 membase = 0, memsize = 0;
+
 void
-kinit()
+kinit(uint64 *base, uint64 *size)
 {
   initlock(&kmem.lock, "kmem");
-  freerange(end, (void *)PHYSTOP);
+  membase = *base, memsize = *size;
+  freerange(end, (void *)(*base + *size));
 }
 
 void
@@ -48,7 +51,8 @@ kfree(void *pa)
 {
   struct run *r;
 
-  if (((uint64)pa % PGSIZE) != 0 || (char *)pa < end || (uint64)pa >= PHYSTOP)
+  if (((uint64)pa % PGSIZE) != 0 || (char *)pa < end ||
+      (uint64)pa >= (membase + memsize))
     panic("kfree");
 
   // Fill with junk to catch dangling refs.

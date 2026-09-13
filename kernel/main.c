@@ -14,27 +14,39 @@ main(uint64 hartid, uint64 dtb)
   if (cpuid() == 0) {
     // read dtb to setup memory
     struct fdt_result parse_res = parse_fdt(dtb);
+    char *res_status =
+      parse_res.status == FDT_OK ? "DTB parsed" : "DTB parse failed";
+    struct fdt_node *root = fdt_get_root_node();
+    struct fdt_node *mem = fdt_get_memory_node(root);
+    uint64 base = 0, size = 0;
+    fdt_populate_memory_vals(mem, &base, &size);
 
     consoleinit();
     printkinit();
     printk("\n");
     printk("xv6 kernel is booting\n");
-    printk("DTB pointer is %s\n",
-           parse_res.status == FDT_OK ? "valid" : "invalid");
+    printk("%s\n", res_status);
+
     printk("\n");
-    kinit();            // physical page allocator
-    kvminit();          // create kernel page table
-    kvminithart();      // turn on paging
-    procinit();         // process table
-    trapinit();         // trap vectors
-    trapinithart();     // install kernel trap vector
-    plicinit();         // set up interrupt controller
-    plicinithart();     // ask PLIC for device interrupts
-    binit();            // buffer cache
-    iinit();            // inode table
-    fileinit();         // file table
-    virtio_disk_init(); // emulated hard disk
-    userinit();         // first user process
+    kinit(&base, &size); // physical page allocator
+
+    if (mem == 0) {
+      base = 0x80000000L;
+      size = base + (128 * 1024 * 1024);
+    }
+
+    kvminit(&base, &size); // create kernel page table
+    kvminithart();         // turn on paging
+    procinit();            // process table
+    trapinit();            // trap vectors
+    trapinithart();        // install kernel trap vector
+    plicinit();            // set up interrupt controller
+    plicinithart();        // ask PLIC for device interrupts
+    binit();               // buffer cache
+    iinit();               // inode table
+    fileinit();            // file table
+    virtio_disk_init();    // emulated hard disk
+    userinit();            // first user process
 
     __atomic_store_n(&started, 1, __ATOMIC_RELEASE);
   } else {
