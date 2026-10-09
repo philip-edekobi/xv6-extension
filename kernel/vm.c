@@ -8,6 +8,34 @@
 #include "proc.h"
 #include "fs.h"
 
+// KERNBASE and PHYSIZE
+static uint64 BASE;
+static uint64 SIZE;
+
+uint64
+getBase(void)
+{
+  return BASE;
+}
+
+uint64
+getSize(void)
+{
+  return SIZE;
+}
+
+void
+setBase(uint64 b)
+{
+  BASE = b;
+}
+
+void
+setSize(uint64 s)
+{
+  SIZE = s;
+}
+
 /*
  * the kernel's page table.
  */
@@ -19,9 +47,11 @@ extern char trampoline[]; // trampoline.S
 
 // Make a direct-map page table for the kernel.
 pagetable_t
-kvmmake(uint64 *base, uint64 *size)
+kvmmake()
 {
   pagetable_t kpgtbl;
+  uint64 base = getBase();
+  uint64 size = getSize();
 
   kpgtbl = (pagetable_t)kalloc();
   memset(kpgtbl, 0, PGSIZE);
@@ -36,10 +66,10 @@ kvmmake(uint64 *base, uint64 *size)
   kvmmap(kpgtbl, PLIC, PLIC, 0x4000000, PTE_R | PTE_W);
 
   // map kernel text executable and read-only.
-  kvmmap(kpgtbl, *base, *base, (uint64)etext - *base, PTE_R | PTE_X);
+  kvmmap(kpgtbl, base, base, (uint64)etext - base, PTE_R | PTE_X);
 
   // map kernel data and the physical RAM we'll make use of.
-  kvmmap(kpgtbl, (uint64)etext, (uint64)etext, (*base + *size) - (uint64)etext,
+  kvmmap(kpgtbl, (uint64)etext, (uint64)etext, (base + size) - (uint64)etext,
          PTE_R | PTE_W);
 
   // map the trampoline for trap entry/exit to
@@ -64,9 +94,9 @@ kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
 
 // Initialize the kernel_pagetable, shared by all CPUs.
 void
-kvminit(uint64 *base, uint64 *size)
+kvminit()
 {
-  kernel_pagetable = kvmmake(base, size);
+  kernel_pagetable = kvmmake();
 }
 
 // Switch the current CPU's h/w page table register to

@@ -26,11 +26,11 @@ struct {
 static uint64 membase = 0, memsize = 0;
 
 void
-kinit(uint64 *base, uint64 *size)
+kinit()
 {
   initlock(&kmem.lock, "kmem");
-  membase = *base, memsize = *size;
-  freerange(end, (void *)(*base + *size));
+  membase = getBase(), memsize = getSize();
+  freerange(end, (void *)(membase + memsize));
 }
 
 void

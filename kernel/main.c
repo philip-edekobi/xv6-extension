@@ -21,6 +21,10 @@ main(uint64 hartid, uint64 dtb)
     uint64 base = 0, size = 0;
     fdt_populate_memory_vals(mem, &base, &size);
 
+    // set base and size in vm.c
+    setBase(base);
+    setSize(size);
+
     consoleinit();
     printkinit();
     printk("\n");
@@ -28,7 +32,7 @@ main(uint64 hartid, uint64 dtb)
     printk("%s\n", res_status);
 
     printk("\n");
-    kinit(&base, &size); // physical page allocator
+    kinit(); // physical page allocator
 
     if (mem == 0) {
       base = 0x80000000L;

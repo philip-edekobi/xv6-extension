@@ -66,7 +66,7 @@ void            ireclaim(int);
 // kalloc.c
 void*           kalloc(void);
 void            kfree(void *);
-void            kinit(uint64 *base, uint64 *size);
+void            kinit();
 int             kpgcount(void);
 
 // log.c
@@ -160,7 +160,11 @@ void            uartwrite(char [], int);
 void            uartputc_sync(int);
 
 // vm.c
-void            kvminit(uint64 *base, uint64 *size);
+uint64          getBase(void);
+uint64          getSize(void);
+void            setBase(uint64);
+void            setSize(uint64);
+void            kvminit();
 void            kvminithart(void);
 void            kvmmap(pagetable_t, uint64, uint64, uint64, int);
 int             mappages(pagetable_t, uint64, uint64, uint64, int);
