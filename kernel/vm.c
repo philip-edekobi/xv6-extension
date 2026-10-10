@@ -54,6 +54,9 @@ kvmmake()
   uint64 size = getSize();
 
   kpgtbl = (pagetable_t)kalloc();
+  if (kpgtbl == 0)
+    return 0;
+
   memset(kpgtbl, 0, PGSIZE);
 
   // uart registers
@@ -76,9 +79,6 @@ kvmmake()
   // the highest virtual address in the kernel.
   kvmmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 
-  // allocate and map a kernel stack for each process.
-  proc_mapstacks(kpgtbl);
-
   return kpgtbl;
 }
 
@@ -97,6 +97,9 @@ void
 kvminit()
 {
   kernel_pagetable = kvmmake();
+
+  // allocate and map a kernel stack for each process.
+  proc_mapstacks(kernel_pagetable);
 }
 
 // Switch the current CPU's h/w page table register to

@@ -55,6 +55,7 @@ procinit(void)
     initlock(&p->lock, "proc");
     p->state = UNUSED;
     p->kstack = KSTACK((int)(p - proc));
+    // p->kstack = KSTACK_VA;
   }
 }
 
@@ -132,9 +133,25 @@ found:
     return 0;
   }
 
+  // Allocate a kernel stack page
+  uint64 pa = (uint64)kalloc();
+  if ((p->kstack_pa = pa) == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if (p->pagetable == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
+  // Set up the process kernel page table
+  p->kpagetable = proc_kpagetable(p);
+  if (p->kpagetable == 0) {
     freeproc(p);
     release(&p->lock);
     return 0;
@@ -158,9 +175,15 @@ freeproc(struct proc *p)
   if (p->trapframe)
     kfree((void *)p->trapframe);
   p->trapframe = 0;
+  if (p->kstack_pa)
+    kfree((void *)p->kstack_pa);
+  p->kstack_pa = 0;
   if (p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
+  if (p->kpagetable)
+    proc_kfreepagetable(p->kpagetable);
+  p->kpagetable = 0;
   p->sz = 0;
   p->pid = 0;
   p->name[0] = 0;
@@ -204,6 +227,27 @@ proc_pagetable(struct proc *p)
   return pagetable;
 }
 
+// Create a kenel page table with the default device/mem mappings and kstack mapping
+pagetable_t
+proc_kpagetable(struct proc *p)
+{
+  pagetable_t kpagetable;
+
+  // Default kernel page table with device/mem mappings
+  kpagetable = kvmmake();
+  if (kpagetable == 0)
+    return 0;
+
+  // map the kernal stack
+  if (mappages(kpagetable, KSTACK_VA, PGSIZE, p->kstack_pa, PTE_R | PTE_W) <
+      0) {
+    proc_kfreepagetable(kpagetable);
+    return 0;
+  }
+
+  return kpagetable;
+}
+
 // Free a process's page table, and free the
 // physical memory it refers to.
 void
@@ -212,6 +256,29 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
   uvmfree(pagetable, sz);
+}
+
+// Free a process's kernel page table
+// free only mappings belonging to this page table but
+// don't free actual pages or shared kernel pages
+void
+proc_kfreepagetable(pagetable_t kpagetable)
+{
+  // there are 2^9=512 PTEs in a page table
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = kpagetable[i];
+    if (pte & PTE_V) {
+      if ((pte & (PTE_R | PTE_W | PTE_X)) == 0) { // does not point to a leaf
+        // get the physical page and recursively free
+        uint64 phy_page = PTE2PA(pte);
+        proc_kfreepagetable((pagetable_t)phy_page);
+      }
+
+      // else: it's a leaf
+    }
+  }
+
+  kfree((void *)kpagetable);
 }
 
 // Set up first user process.

@@ -39,18 +39,18 @@ main(uint64 hartid, uint64 dtb)
       size = base + (128 * 1024 * 1024);
     }
 
-    kvminit(&base, &size); // create kernel page table
-    kvminithart();         // turn on paging
-    procinit();            // process table
-    trapinit();            // trap vectors
-    trapinithart();        // install kernel trap vector
-    plicinit();            // set up interrupt controller
-    plicinithart();        // ask PLIC for device interrupts
-    binit();               // buffer cache
-    iinit();               // inode table
-    fileinit();            // file table
-    virtio_disk_init();    // emulated hard disk
-    userinit();            // first user process
+    kvminit();          // create kernel page table
+    kvminithart();      // turn on paging
+    procinit();         // process table
+    trapinit();         // trap vectors
+    trapinithart();     // install kernel trap vector
+    plicinit();         // set up interrupt controller
+    plicinithart();     // ask PLIC for device interrupts
+    binit();            // buffer cache
+    iinit();            // inode table
+    fileinit();         // file table
+    virtio_disk_init(); // emulated hard disk
+    userinit();         // first user process
 
     __atomic_store_n(&started, 1, __ATOMIC_RELEASE);
   } else {

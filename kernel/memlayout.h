@@ -61,3 +61,11 @@
 //   TRAPFRAME (p->trapframe, used by the trampoline)
 //   TRAMPOLINE (the same page as in the kernel)
 #define TRAPFRAME (TRAMPOLINE - PGSIZE)
+
+// define KUSERBASE and KUSERLIMIT to act as the address space range for kernel page table in processes
+#define KUSERBASE  0x20000000L
+#define KUSERLIMIT KERNBASE
+
+// It's ok to reuse the Trapframe VA because there is no trapframe in the kernel pagetable
+#define KSTACK_VA    TRAPFRAME
+#define KSTACK_GUARD (KSTACK_VA - PGSIZE)
