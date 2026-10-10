@@ -371,6 +371,32 @@ uvmclear(pagetable_t pagetable, uint64 va)
   *pte &= ~PTE_U;
 }
 
+int
+uvmkclone(pagetable_t old, pagetable_t new, uint64 oldsz, uint64 newsz)
+{
+  pte_t *pte;
+  uint64 pa, i;
+  uint flags;
+
+  for (i = PGROUNDDOWN(oldsz); i < newsz; i += PGSIZE) {
+    if ((pte = walk(old, i, 0)) == 0)
+      continue;
+    if ((*pte & PTE_V) == 0)
+      continue;
+    pa = PTE2PA(*pte);
+    flags = PTE_FLAGS(*pte) & ~PTE_U;
+    if (mappages(new, KUSERBASE + i, PGSIZE, pa, flags) != 0) {
+      goto cloneerr;
+    }
+  }
+  return 0;
+
+cloneerr:
+  uvmunmap(new, KUSERBASE + PGROUNDDOWN(oldsz),
+           (i - PGROUNDDOWN(oldsz)) / PGSIZE, 0);
+  return -1;
+}
+
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.

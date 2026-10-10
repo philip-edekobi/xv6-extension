@@ -34,6 +34,7 @@ kexec(char *path, char **argv)
   struct inode *ip;
   struct proghdr ph;
   pagetable_t pagetable = 0, oldpagetable;
+  pagetable_t kpagetable = 0, oldkpagetable;
   struct proc *p = myproc();
 
   begin_op();
@@ -54,6 +55,9 @@ kexec(char *path, char **argv)
     goto bad;
 
   if ((pagetable = proc_pagetable(p)) == 0)
+    goto bad;
+
+  if ((kpagetable = proc_kpagetable(p)) == 0)
     goto bad;
 
   // Load program into memory.
@@ -118,6 +122,13 @@ kexec(char *path, char **argv)
       0)
     goto bad;
 
+  if (KUSERBASE + sz > KUSERLIMIT)
+    goto bad;
+
+  if (uvmkclone(pagetable, kpagetable, 0, sz) < 0) {
+    goto bad;
+  }
+
   // a0 and a1 contain arguments to user main(argc, argv)
   // argc is returned via the system call return
   // value, which goes in a0.
@@ -132,16 +143,21 @@ kexec(char *path, char **argv)
   // Commit to the user image.
   oldpagetable = p->pagetable;
   p->pagetable = pagetable;
+  oldkpagetable = p->kpagetable;
+  p->kpagetable = kpagetable;
   p->sz = sz;
   p->trapframe->epc = elf.entry; // initial program counter = ulib.c:start()
   p->trapframe->sp = sp;         // initial stack pointer
   proc_freepagetable(oldpagetable, oldsz);
+  proc_kfreepagetable(oldkpagetable);
 
   return argc; // this ends up in a0, the first argument to main(argc, argv)
 
 bad:
   if (pagetable)
     proc_freepagetable(pagetable, sz);
+  if (kpagetable)
+    proc_kfreepagetable(kpagetable);
   if (ip) {
     iunlockput(ip);
     end_op();

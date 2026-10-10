@@ -310,10 +310,25 @@ growproc(int n)
     if (sz + n > TRAPFRAME) {
       return -1;
     }
+    if (KUSERBASE + sz + n > KUSERLIMIT) {
+      return -1;
+    }
     if ((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {
       return -1;
     }
+    if (uvmkclone(p->pagetable, p->kpagetable, p->sz, sz) < 0) {
+      uvmdealloc(p->pagetable, sz, p->sz);
+      return -1;
+    }
   } else if (n < 0) {
+    uint64 newsz = sz + n;
+
+    // unmap the shrinking region aliases without freeing actual physical
+    // pages
+    if (PGROUNDUP(newsz) < PGROUNDUP(sz)) {
+      int npages = (PGROUNDUP(sz) - PGROUNDUP(newsz)) / PGSIZE;
+      uvmunmap(p->kpagetable, KUSERBASE + PGROUNDUP(newsz), npages, 0);
+    }
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
   p->sz = sz;
@@ -341,6 +356,12 @@ kfork(void)
     return -1;
   }
   np->sz = p->sz;
+
+  if (uvmkclone(np->pagetable, np->kpagetable, 0, np->sz) < 0) {
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
