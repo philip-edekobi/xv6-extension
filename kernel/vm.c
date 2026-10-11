@@ -41,6 +41,8 @@ setSize(uint64 s)
  */
 pagetable_t kernel_pagetable;
 
+pagetable_t kpagetable_init;
+
 extern char etext[]; // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
@@ -97,9 +99,8 @@ void
 kvminit()
 {
   kernel_pagetable = kvmmake();
-
-  // allocate and map a kernel stack for each process.
-  proc_mapstacks(kernel_pagetable);
+  kpagetable_init = kvmmake(); // template for proc_kpagetable_copy;
+                               // never mutated
 }
 
 // Switch the current CPU's h/w page table register to
@@ -378,7 +379,14 @@ uvmkclone(pagetable_t old, pagetable_t new, uint64 oldsz, uint64 newsz)
   uint64 pa, i;
   uint flags;
 
-  for (i = PGROUNDDOWN(oldsz); i < newsz; i += PGSIZE) {
+  i = PGROUNDDOWN(oldsz);
+
+  // if the page containing oldsz is already aliased,
+  // skip it to avoid a remap panic
+  if (i < oldsz && ismapped(new, KUSERBASE + i))
+    i += PGSIZE;
+
+  for (; i < newsz; i += PGSIZE) {
     if ((pte = walk(old, i, 0)) == 0)
       continue;
     if ((*pte & PTE_V) == 0)
@@ -439,22 +447,30 @@ copyout(pagetable_t pagetable, uint64 psz, uint64 dstva, char *src, uint64 len)
 // Copy len bytes to dst from virtual address srcva in a given page table.
 // Return 0 on success, -1 on error.
 int
-copyin(pagetable_t pagetable, uint64 psz, char *dst, uint64 srcva, uint64 len)
+copyin(pagetable_t pagetable, pagetable_t kpagetable, uint64 psz, char *dst,
+       uint64 srcva, uint64 len)
 {
-  uint64 n, va0, pa0;
+  uint64 n, va0;
 
   while (len > 0) {
     va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if (pa0 == 0) {
-      if ((pa0 = vmfault(pagetable, psz, va0, 1)) == 0) {
+
+    if (va0 >= psz)
+      return -1;
+    if (KUSERBASE + va0 >= KUSERLIMIT)
+      return -1;
+
+    if (!ismapped(kpagetable, KUSERBASE + va0)) {
+      if (vmfault_kclone(pagetable, kpagetable, psz, va0, 1) == 0) {
         return -1;
       }
     }
+
     n = PGSIZE - (srcva - va0);
     if (n > len)
       n = len;
-    memmove(dst, (void *)(pa0 + (srcva - va0)), n);
+
+    memmove(dst, (void *)(KUSERBASE + srcva), n);
 
     len -= n;
     dst += n;
@@ -468,25 +484,30 @@ copyin(pagetable_t pagetable, uint64 psz, char *dst, uint64 srcva, uint64 len)
 // until a '\0', or max.
 // Return 0 on success, -1 on error.
 int
-copyinstr(pagetable_t pagetable, uint64 psz, char *dst, uint64 srcva,
-          uint64 max)
+copyinstr(pagetable_t pagetable, pagetable_t kpagetable, uint64 psz, char *dst,
+          uint64 srcva, uint64 max)
 {
-  uint64 n, va0, pa0;
+  uint64 n, va0;
   int got_null = 0;
 
   while (got_null == 0 && max > 0) {
     va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if (pa0 == 0) {
-      if ((pa0 = vmfault(pagetable, psz, va0, 1)) == 0) {
+    if (va0 >= psz)
+      return -1;
+    if (KUSERBASE + va0 >= KUSERLIMIT)
+      return -1;
+
+    if (!ismapped(kpagetable, KUSERBASE + va0)) {
+      if (vmfault_kclone(pagetable, kpagetable, psz, va0, 1) == 0) {
         return -1;
       }
     }
+
     n = PGSIZE - (srcva - va0);
     if (n > max)
       n = max;
 
-    char *p = (char *)(pa0 + (srcva - va0));
+    char *p = (char *)(KUSERBASE + srcva);
     while (n > 0) {
       if (*p == '\0') {
         *dst = '\0';
@@ -536,6 +557,48 @@ vmfault(pagetable_t pagetable, uint64 psz, uint64 va, int read)
   return mem;
 }
 
+uint64
+vmfault_kclone(pagetable_t pagetable, pagetable_t kpagetable, uint64 psz,
+               uint64 va, int read)
+{
+  uint64 mem;
+  uint64 pa;
+  pte_t *pte;
+  uint flags;
+
+  if (va >= psz)
+    return 0;
+  va = PGROUNDDOWN(va);
+
+  if (ismapped(pagetable, va)) { // is already mapped in the user table
+    pte = walk(pagetable, va, 0);
+    pa = PTE2PA(*pte);
+    flags = PTE_FLAGS(*pte) & ~PTE_U;
+
+    if (mappages(kpagetable, KUSERBASE + va, PGSIZE, pa, flags) != 0)
+      return 0;
+
+    return pa;
+  }
+
+  mem = (uint64)kalloc();
+  if (mem == 0)
+    return 0;
+  memset((void *)mem, 0, PGSIZE);
+
+  if (mappages(pagetable, va, PGSIZE, mem, PTE_W | PTE_U | PTE_R) != 0) {
+    kfree((void *)mem);
+    return 0;
+  }
+
+  if (mappages(kpagetable, KUSERBASE + va, PGSIZE, mem, PTE_W | PTE_R) != 0) {
+    uvmunmap(pagetable, va, 1, 1);
+    return 0;
+  }
+
+  return mem;
+}
+
 int
 ismapped(pagetable_t pagetable, uint64 va)
 {
@@ -555,4 +618,34 @@ kvmstat(void)
   int pagecount = kpgcount();
 
   return (uint64)PGSIZE * pagecount;
+}
+
+int
+kvm_copy_pagetable(pagetable_t old, pagetable_t new)
+{
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = old[i];
+    if ((pte & PTE_V) == 0)
+      continue;
+
+    if ((pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+      pagetable_t oldchild = (pagetable_t)PTE2PA(pte);
+      pagetable_t newchild = (pagetable_t)kalloc();
+
+      if (newchild == 0)
+        return -1;
+      memset(newchild, 0, PGSIZE);
+
+      if (kvm_copy_pagetable(oldchild, newchild) < 0) {
+        kfree((void *)newchild);
+        return -1;
+      }
+      new[i] = PA2PTE(newchild) | PTE_V;
+    } else {
+      // a leaf
+      new[i] = pte;
+    }
+  }
+
+  return 0;
 }

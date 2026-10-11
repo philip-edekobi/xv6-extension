@@ -12,6 +12,9 @@ struct proc proc[NPROC];
 
 struct proc *initproc;
 
+extern pagetable_t kernel_pagetable;
+extern pagetable_t kpagetable_init;
+
 int nextpid = 1;
 struct spinlock pid_lock;
 
@@ -54,8 +57,7 @@ procinit(void)
   for (p = proc; p < &proc[NPROC]; p++) {
     initlock(&p->lock, "proc");
     p->state = UNUSED;
-    p->kstack = KSTACK((int)(p - proc));
-    // p->kstack = KSTACK_VA;
+    p->kstack = KSTACK_VA;
   }
 }
 
@@ -234,11 +236,17 @@ proc_kpagetable(struct proc *p)
   pagetable_t kpagetable;
 
   // Default kernel page table with device/mem mappings
-  kpagetable = kvmmake();
+  kpagetable = (pagetable_t)kalloc();
   if (kpagetable == 0)
     return 0;
+  memset(kpagetable, 0, PGSIZE);
 
-  // map the kernal stack
+  if (kvm_copy_pagetable(kpagetable_init, kpagetable) < 0) {
+    proc_kfreepagetable(kpagetable);
+    return 0;
+  }
+
+  // map the kernel stack
   if (mappages(kpagetable, KSTACK_VA, PGSIZE, p->kstack_pa, PTE_R | PTE_W) <
       0) {
     proc_kfreepagetable(kpagetable);
@@ -538,10 +546,18 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        // Switch the pagetable to the process's kpagetable
+        w_satp(MAKE_SATP(p->kpagetable));
+        sfence_vma();
         swtch(&c->context, &p->context);
 
         // Don't re-enable interrupts on release.
         mycpu()->intena = 0;
+
+        // Switch back to the global kernal pagetable
+        w_satp(MAKE_SATP(kernel_pagetable));
+        sfence_vma();
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
@@ -749,7 +765,7 @@ either_copyin(void *dst, int user_src, uint64 src, uint64 len)
 {
   struct proc *p = myproc();
   if (user_src) {
-    return copyin(p->pagetable, p->sz, dst, src, len);
+    return copyin(p->pagetable, p->kpagetable, p->sz, dst, src, len);
   } else {
     memmove(dst, (char *)src, len);
     return 0;

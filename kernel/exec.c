@@ -125,9 +125,8 @@ kexec(char *path, char **argv)
   if (KUSERBASE + sz > KUSERLIMIT)
     goto bad;
 
-  if (uvmkclone(pagetable, kpagetable, 0, sz) < 0) {
+  if (uvmkclone(pagetable, kpagetable, 0, sz) < 0)
     goto bad;
-  }
 
   // a0 and a1 contain arguments to user main(argc, argv)
   // argc is returned via the system call return
@@ -148,6 +147,10 @@ kexec(char *path, char **argv)
   p->sz = sz;
   p->trapframe->epc = elf.entry; // initial program counter = ulib.c:start()
   p->trapframe->sp = sp;         // initial stack pointer
+
+  w_satp(MAKE_SATP(p->kpagetable));
+  sfence_vma();
+
   proc_freepagetable(oldpagetable, oldsz);
   proc_kfreepagetable(oldkpagetable);
 

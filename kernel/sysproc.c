@@ -59,6 +59,8 @@ sys_sbrk(void)
       return -1;
     if (addr + n > TRAPFRAME)
       return -1;
+    if (KUSERBASE + addr + n > KUSERLIMIT)
+      return -1;
     myproc()->sz += n;
   }
   return addr;
