@@ -637,7 +637,8 @@ kvm_copy_pagetable(pagetable_t old, pagetable_t new)
       memset(newchild, 0, PGSIZE);
 
       if (kvm_copy_pagetable(oldchild, newchild) < 0) {
-        kfree((void *)newchild);
+        // kfree((void *)newchild);
+        proc_kfreepagetable(newchild);
         return -1;
       }
       new[i] = PA2PTE(newchild) | PTE_V;
