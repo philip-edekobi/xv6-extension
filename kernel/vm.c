@@ -8,6 +8,8 @@
 #include "proc.h"
 #include "fs.h"
 
+#define MEGAPAGESIZE 0x200000
+
 // KERNBASE and PHYSIZE
 static uint64 BASE;
 static uint64 SIZE;
@@ -90,7 +92,7 @@ kvmmake()
 void
 kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
 {
-  if (mappages(kpgtbl, va, sz, pa, perm) != 0)
+  if (mappages_super(kpgtbl, va, sz, pa, perm) != 0)
     panic("kvmmap");
 }
 
@@ -138,7 +140,11 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
   for (int level = 2; level > 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
     if (*pte & PTE_V) {
-      pagetable = (pagetable_t)PTE2PA(*pte);
+      if (*pte & (PTE_R | PTE_W | PTE_X)) {
+        return pte;
+      } else {
+        pagetable = (pagetable_t)PTE2PA(*pte);
+      }
     } else {
       if (!alloc || (pagetable = (pde_t *)kalloc()) == 0)
         return 0;
@@ -205,6 +211,84 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
     a += PGSIZE;
     pa += PGSIZE;
   }
+  return 0;
+}
+
+int
+mapsuperpage(pagetable_t pagetable, uint64 va, uint64 pa, int perm)
+{
+  pte_t *pte;
+
+  if ((va % MEGAPAGESIZE) != 0) // va should be aligned on a 2MB boundary
+    panic("mapsuperpage: va not aligned");
+  if ((pa % MEGAPAGESIZE) != 0)
+    panic("mapsuperpage: pa not aligned");
+
+  // index into level 2, to find or allocate the 30 bits it indexes to
+  // then use it to get the level 1 superpage directly without walking to level 0
+  pte = &pagetable[PX(2, va)];
+  if (*pte & PTE_V) {
+    pagetable = (pagetable_t)PTE2PA(*pte);
+  } else {
+    if ((pagetable = (pagetable_t)kalloc()) == 0)
+      return -1;
+    memset(pagetable, 0, PGSIZE);
+    *pte = PA2PTE(pagetable) | PTE_V;
+  }
+
+  pte = &pagetable[PX(1, va)];
+  if (*pte & PTE_V)
+    panic("mapsuperpage: remap");
+  *pte = PA2PTE(pa) | perm | PTE_V;
+
+  return 0;
+}
+
+// Map a region [va, va+size) to [pa, pa+size) using 2MB superpages
+// wherever possible, falling back to ordinary 4kb pages for any portion
+// that isn't 2MB-aligned
+// va and pa must be page-aligned and identity mapped(this is mostly for kernel
+// uses where we know an identity mapping is in use)
+//
+// Mapping is split into 3 phases:
+// 1. leading 4KB pages, from va up to the next 2MB boundary
+// 2. one mapsuperpage() per full 2MB chunk remaining
+// 3. trailing 4KB pages for whatever <2MB chunk left
+int
+mappages_super(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa,
+               int perm)
+{
+  uint64 a;
+  pte_t *pte;
+
+  if ((va % PGSIZE) != 0)
+    panic("mappages_super: va not aligned");
+
+  if ((size % PGSIZE) != 0)
+    panic("mappages_super: size not aligned");
+
+  if (size == 0)
+    panic("mappages_super: size");
+
+  a = va;
+
+  for (; a < va + size;) {
+    if ((a % MEGAPAGESIZE == 0) && (a + MEGAPAGESIZE <= va + size)) {
+      if (mapsuperpage(pagetable, a, pa, perm) != 0)
+        return -1;
+      a += MEGAPAGESIZE;
+      pa += MEGAPAGESIZE;
+    } else {
+      if ((pte = walk(pagetable, a, 1)) == 0)
+        return -1;
+      if (*pte & PTE_V)
+        panic("mappages_super: remap");
+      *pte = PA2PTE(pa) | perm | PTE_V;
+      a += PGSIZE;
+      pa += PGSIZE;
+    }
+  }
+
   return 0;
 }
 
