@@ -21,6 +21,11 @@ main(uint64 hartid, uint64 dtb)
     uint64 base = 0, size = 0;
     fdt_populate_memory_vals(mem, &base, &size);
 
+    if (mem == 0) {
+      base = KERNBASE;
+      size = 128 * 1024 * 1024;
+    }
+
     // set base and size in vm.c
     setBase(base);
     setSize(size);
@@ -33,11 +38,6 @@ main(uint64 hartid, uint64 dtb)
 
     printk("\n");
     kinit(); // physical page allocator
-
-    if (mem == 0) {
-      base = 0x80000000L;
-      size = base + (128 * 1024 * 1024);
-    }
 
     kvminit();          // create kernel page table
     kvminithart();      // turn on paging
