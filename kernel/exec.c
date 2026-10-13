@@ -7,7 +7,11 @@
 #include "defs.h"
 #include "elf.h"
 
+#define BUFSIZ    192
+#define REDIR_LIM 4
+
 static int loadseg(pde_t *, uint64, struct inode *, uint, uint);
+static int eatwhitespace(char buf[], int n);
 
 // map ELF permissions to PTE permission bits.
 int
@@ -28,7 +32,7 @@ int
 kexec(char *path, char **argv)
 {
   char *s, *last;
-  int i, off;
+  int i, off, depth = 0;
   uint64 argc, sz = 0, sp, ustack[MAXARG], stackbase;
   struct elfhdr elf;
   struct inode *ip;
@@ -39,12 +43,75 @@ kexec(char *path, char **argv)
 
   begin_op();
 
-  // Open the executable file.
-  if ((ip = namei(path)) == 0) {
+  char paths[REDIR_LIM][MAXPATH];
+  char *argvs[REDIR_LIM][MAXARG];
+
+  while (depth < REDIR_LIM) {
+    // Open the executable file.
+    if ((ip = namei(path)) == 0) {
+      end_op();
+      return -1;
+    }
+
+    char buf[BUFSIZ];
+
+    ilock(ip);
+
+    int n = readi(ip, 0, (uint64)buf, 0, BUFSIZ - 1);
+    if (n > 0) {
+      buf[n] = '\0';
+      if (n >= 2 && buf[0] == '#' && buf[1] == '!') {
+        i = 0;
+        char *pathstr = buf + eatwhitespace(buf, 2);
+        while (*pathstr && *pathstr != ' ' && *pathstr != '\n' &&
+               *pathstr != '\r' && *pathstr != '\t' && i < MAXPATH - 1)
+          paths[depth][i++] = *pathstr++;
+
+        paths[depth][i] = '\0';
+
+        iunlockput(ip);
+
+        if (i == 0) {
+          end_op();
+          return -1;
+        }
+        if (*pathstr && *pathstr != ' ' && *pathstr != '\n' &&
+            *pathstr != '\r' && *pathstr != '\t') {
+          end_op();
+          return -1;
+        }
+
+        // build new argv
+        int newargc = 0;
+        argvs[depth][newargc++] = paths[depth];
+        argvs[depth][newargc++] = path;
+
+        for (i = 1; argv[i]; i++) {
+          if (newargc >= MAXARG - 1) {
+            end_op();
+            return -1;
+          }
+          argvs[depth][newargc++] = argv[i];
+        }
+        argvs[depth][newargc] = 0;
+
+        path = paths[depth];
+        argv = argvs[depth];
+        depth++;
+      } else {
+        break;
+      }
+    } else {
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+  }
+
+  if (depth == REDIR_LIM) {
     end_op();
     return -1;
   }
-  ilock(ip);
 
   // Read the ELF header.
   if (readi(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
@@ -192,4 +259,14 @@ loadseg(pagetable_t pagetable, uint64 va, struct inode *ip, uint offset,
   }
 
   return 0;
+}
+
+static int
+eatwhitespace(char buf[], int n)
+{
+  int i = n;
+  while (buf[i] && (buf[i] == ' ' || buf[i] == '\t'))
+    i++;
+
+  return i;
 }
